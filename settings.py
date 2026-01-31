@@ -31,15 +31,20 @@ PAGE_SIZE = 50
 # Fields to select from Graph API (reduces payload size)
 MESSAGE_SELECT_FIELDS = [
     "id",
+    "conversationId",
+    "internetMessageId",
     "subject",
     "from",
     "toRecipients",
     "ccRecipients",
     "receivedDateTime",
+    "sentDateTime",
     "isRead",
-    "conversationId",
     "webLink",
+    "hasAttachments",
+    "importance",
     "bodyPreview",
+    "body",
 ]
 
 

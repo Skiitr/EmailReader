@@ -3,10 +3,10 @@
 Microsoft 365 Email Reader - CLI Entry Point
 
 Fetches emails from Microsoft 365 Outlook using the Microsoft Graph API.
-Outputs results as JSON to stdout and optionally to a file.
+Outputs normalized messages as JSON to stdout and optionally to a file.
 
 Usage:
-    python main.py --max 50 --folder inbox --unread-only false --out emails.json
+    python main.py --max 50 --folder inbox --unread-only false --out emails.json --pretty
 """
 import argparse
 import json
@@ -20,6 +20,7 @@ from settings import (
     validate_settings,
 )
 from graph_client import GraphClient
+from normalize import normalize_messages
 
 
 def parse_args() -> argparse.Namespace:
@@ -34,6 +35,8 @@ Examples:
   python main.py --unread-only false      # Fetch all messages (read and unread)
   python main.py --folder sentitems       # Fetch from Sent Items folder
   python main.py --out emails.json        # Save output to file
+  python main.py --pretty                 # Pretty-print JSON output
+  python main.py --include-body false     # Exclude body_text (use preview only)
 
 Common folder names:
   inbox, sentitems, drafts, deleteditems, junkemail, archive
@@ -73,6 +76,20 @@ Environment variables:
         help="Optional output file path for JSON (also outputs to stdout)",
     )
 
+    parser.add_argument(
+        "--pretty",
+        action="store_true",
+        default=False,
+        help="Pretty-print JSON output with indentation",
+    )
+
+    parser.add_argument(
+        "--no-body",
+        action="store_true",
+        default=False,
+        help="Exclude body_text from output (use preview only)",
+    )
+
     return parser.parse_args()
 
 
@@ -87,8 +104,9 @@ def main() -> int:
         print(f"Configuration error: {e}", file=sys.stderr)
         return 1
 
-    # Convert unread-only string to boolean
+    # Convert string flags to booleans
     unread_only = args.unread_only.lower() == "true"
+    include_body = not args.no_body
 
     # Validate max value
     if args.max < 1:
@@ -101,7 +119,7 @@ def main() -> int:
     # Create client and fetch messages
     try:
         client = GraphClient()
-        messages = client.get_messages(
+        raw_messages = client.get_messages(
             folder=args.folder,
             max_messages=args.max,
             unread_only=unread_only,
@@ -113,15 +131,12 @@ def main() -> int:
         print(f"Unexpected error: {e}", file=sys.stderr)
         return 1
 
-    # Format output
-    output = {
-        "count": len(messages),
-        "folder": args.folder,
-        "unreadOnly": unread_only,
-        "messages": messages,
-    }
+    # Normalize messages to canonical schema
+    normalized_messages = normalize_messages(raw_messages, include_body=include_body)
 
-    json_output = json.dumps(output, indent=2, ensure_ascii=False)
+    # Format output as JSON array
+    indent = 2 if args.pretty else None
+    json_output = json.dumps(normalized_messages, indent=indent, ensure_ascii=False)
 
     # Write to stdout
     print(json_output)

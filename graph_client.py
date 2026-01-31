@@ -149,7 +149,7 @@ class GraphClient:
             unread_only: If True, only fetch unread messages.
 
         Returns:
-            List of normalized message dictionaries.
+            List of raw message dictionaries from Graph API.
 
         Raises:
             SystemExit: If the API request fails.
@@ -159,6 +159,8 @@ class GraphClient:
         headers = {
             "Authorization": f"Bearer {access_token}",
             "Content-Type": "application/json",
+            # Request plain text body when available (Graph may still return HTML)
+            "Prefer": 'outlook.body-content-type="text"',
         }
 
         # Build the request URL
@@ -222,58 +224,13 @@ class GraphClient:
 
             data = response.json()
 
-            # Normalize and collect messages
+            # Collect raw messages (normalization handled by normalize module)
             for msg in data.get("value", []):
                 if len(messages) >= max_messages:
                     break
-                messages.append(self._normalize_message(msg))
+                messages.append(msg)
 
             # Get next page URL if available
             url = data.get("@odata.nextLink")
 
         return messages
-
-    def _normalize_message(self, msg: dict[str, Any]) -> dict[str, Any]:
-        """
-        Normalize a Graph API message to the expected output format.
-
-        Args:
-            msg: Raw message from Graph API.
-
-        Returns:
-            Normalized message dictionary.
-        """
-        # Extract sender info
-        from_data = msg.get("from", {}).get("emailAddress", {})
-        sender = {
-            "name": from_data.get("name", ""),
-            "address": from_data.get("address", ""),
-        }
-
-        # Extract recipients
-        def extract_recipients(recipients: list[dict] | None) -> list[dict[str, str]]:
-            if not recipients:
-                return []
-            return [
-                {
-                    "name": r.get("emailAddress", {}).get("name", ""),
-                    "address": r.get("emailAddress", {}).get("address", ""),
-                }
-                for r in recipients
-            ]
-
-        to_recipients = extract_recipients(msg.get("toRecipients"))
-        cc_recipients = extract_recipients(msg.get("ccRecipients"))
-
-        return {
-            "id": msg.get("id", ""),
-            "subject": msg.get("subject", ""),
-            "from": sender,
-            "toRecipients": to_recipients,
-            "ccRecipients": cc_recipients,
-            "receivedDateTime": msg.get("receivedDateTime", ""),
-            "isRead": msg.get("isRead", False),
-            "conversationId": msg.get("conversationId", ""),
-            "webLink": msg.get("webLink", ""),
-            "bodyPreview": msg.get("bodyPreview", ""),
-        }

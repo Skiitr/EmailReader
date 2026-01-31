@@ -165,23 +165,14 @@ source ~/.zshrc
 ### Basic Usage
 
 ```bash
-# Fetch 25 unread inbox messages (default)
-python main.py
-
-# Fetch up to 50 messages
-python main.py --max 50
-
-# Fetch all messages (not just unread)
-python main.py --unread-only false
-
-# Fetch from a different folder
-python main.py --folder sentitems
-
-# Save output to a file
-python main.py --out emails.json
-
-# Combine options
-python main.py --max 100 --folder inbox --unread-only false --out all_inbox.json
+python main.py                          # Fetch 25 unread inbox messages (default)
+python main.py --max 50                 # Fetch up to 50 unread inbox messages
+python main.py --unread-only false      # Fetch all messages (read and unread)
+python main.py --folder sentitems       # Fetch from Sent Items folder
+python main.py --out emails.json        # Save output to file
+python main.py --pretty                 # Pretty-print JSON output
+python main.py --no-body                # Exclude body_text (use preview only)
+python main.py --max 100 --folder inbox --unread-only false --out all_inbox.json --pretty
 ```
 
 ### Available Options
@@ -192,6 +183,8 @@ python main.py --max 100 --folder inbox --unread-only false --out all_inbox.json
 | `--folder` | inbox | Mail folder to fetch from |
 | `--unread-only` | true | Only fetch unread messages |
 | `--out` | (none) | Optional file path for JSON output |
+| `--pretty` | (flag) | Pretty-print JSON with indentation |
+| `--no-body` | (flag) | Exclude body_text from output |
 
 ### Common Folder Names
 
@@ -219,35 +212,52 @@ After successful authentication, tokens are cached in `token_cache.json` and sub
 
 ## Example Output
 
+Output is a JSON array of normalized message objects:
+
 ```json
-{
-  "count": 2,
-  "folder": "inbox",
-  "unreadOnly": true,
-  "messages": [
-    {
-      "id": "AAMkAGI2...",
-      "subject": "Weekly Team Update",
-      "from": {
-        "name": "John Doe",
-        "address": "john.doe@company.com"
-      },
-      "toRecipients": [
-        {
-          "name": "Jane Smith",
-          "address": "jane.smith@company.com"
-        }
-      ],
-      "ccRecipients": [],
-      "receivedDateTime": "2026-01-24T14:30:00Z",
-      "isRead": false,
-      "conversationId": "AAQkAGI2...",
-      "webLink": "https://outlook.office365.com/owa/?ItemID=...",
-      "bodyPreview": "Hi team, Here's our weekly update..."
-    }
-  ]
-}
+[
+  {
+    "message_id": "AAMkAGI2...",
+    "conversation_id": "AAQkAGI2...",
+    "internet_message_id": "<abc123@mail.example.com>",
+    "subject": "Weekly Team Update",
+    "from": {
+      "name": "John Doe",
+      "email": "john.doe@company.com"
+    },
+    "to": ["jane.smith@company.com"],
+    "cc": [],
+    "received_at": "2026-01-24T14:30:00Z",
+    "sent_at": "2026-01-24T14:29:55Z",
+    "is_read": false,
+    "web_link": "https://outlook.office365.com/owa/?ItemID=...",
+    "has_attachments": false,
+    "importance": "normal",
+    "body_preview": "Hi team, Here's our weekly update...",
+    "body_text": "Hi team,\n\nHere's our weekly update..."
+  }
+]
 ```
+
+### Output Schema
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `message_id` | string | Graph message ID |
+| `conversation_id` | string\|null | Thread/conversation ID |
+| `internet_message_id` | string\|null | RFC 2822 Message-ID |
+| `subject` | string\|null | Email subject |
+| `from` | object | Sender with `name` and `email` |
+| `to` | array | List of recipient email addresses |
+| `cc` | array | List of CC email addresses |
+| `received_at` | string\|null | ISO 8601 received timestamp |
+| `sent_at` | string\|null | ISO 8601 sent timestamp |
+| `is_read` | boolean | Read status |
+| `web_link` | string\|null | Outlook Web App link |
+| `has_attachments` | boolean | Has attachments |
+| `importance` | string\|null | low/normal/high |
+| `body_preview` | string\|null | Short preview text |
+| `body_text` | string\|null | Cleaned plain text body (max 4000 chars) |
 
 ---
 
@@ -331,7 +341,9 @@ python main.py  # Re-authenticate
 |------|-------------|
 | `main.py` | CLI entry point with argument parsing |
 | `graph_client.py` | MSAL auth + Graph API client |
+| `normalize.py` | Email body cleaning and canonical schema normalization |
 | `settings.py` | Configuration and environment variables |
+| `smoke_test_normalize.py` | Smoke tests for normalization module |
 | `requirements.txt` | Python dependencies |
 | `token_cache.json` | Token cache (created after first login) |
 
