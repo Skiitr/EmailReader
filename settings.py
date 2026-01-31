@@ -56,3 +56,38 @@ def validate_settings() -> None:
             "Set it with: export M365_CLIENT_ID=your-app-client-id\n"
             "See README.md for Azure App Registration setup instructions."
         )
+
+
+# =============================================================================
+# OpenAI Configuration
+# =============================================================================
+
+# API Key (required for AI features)
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
+
+# Model to use for classification (gpt-4o-mini is cost-effective for classification)
+OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
+
+# Request timeout in seconds
+OPENAI_TIMEOUT_SECONDS = int(os.environ.get("OPENAI_TIMEOUT_SECONDS", "30"))
+
+# Maximum characters of body text to send to AI
+OPENAI_MAX_BODY_CHARS = int(os.environ.get("OPENAI_MAX_BODY_CHARS", "2500"))
+
+# Whether to store conversations in OpenAI (false for privacy)
+OPENAI_STORE = os.environ.get("OPENAI_STORE", "false").lower() == "true"
+
+# Default AI CLI settings
+DEFAULT_MAX_AI = 50
+DEFAULT_MIN_CONFIDENCE = 0.75
+
+
+def validate_openai_settings() -> None:
+    """Validate OpenAI settings are present."""
+    if not OPENAI_API_KEY:
+        raise ValueError(
+            "OPENAI_API_KEY environment variable is required for AI features.\n"
+            "Set it with: export OPENAI_API_KEY=sk-your-api-key\n"
+            "Get your API key from https://platform.openai.com/api-keys"
+        )
+

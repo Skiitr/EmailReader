@@ -1,12 +1,13 @@
 # Microsoft 365 Email Reader
 
-A Python CLI tool that fetches emails from Microsoft 365 Outlook using the Microsoft Graph API with OAuth 2.0 delegated authentication.
+A Python CLI tool that fetches emails from Microsoft 365 Outlook using the Microsoft Graph API with OAuth 2.0 delegated authentication. Includes optional AI-powered classification to identify emails that need action.
 
 ## Features
 
 - 🔐 **Secure OAuth 2.0 authentication** via MSAL with interactive login
 - 💾 **Token caching** - login once, reuse tokens for subsequent runs
 - 📧 **Flexible email fetching** - filter by folder, read status, and count
+- 🤖 **AI classification** - identify action requests, questions, and meetings (optional)
 - 📄 **JSON output** - structured output to stdout and optional file
 - 🖥️ **Cross-platform** - works on macOS (Apple Silicon) and Windows
 
@@ -15,6 +16,7 @@ A Python CLI tool that fetches emails from Microsoft 365 Outlook using the Micro
 - Python 3.11 or higher
 - A Microsoft 365 account (work, school, or personal)
 - An Azure App Registration (free - no paid services required)
+- OpenAI API key (optional, for AI classification)
 
 ---
 
@@ -158,6 +160,32 @@ source ~/.zshrc
 4. Add `M365_CLIENT_ID` with your client ID value
 5. Click OK to save
 
+### 5. Configure OpenAI API Key (Optional)
+
+For AI-powered email classification, set your OpenAI API key:
+
+**macOS / Linux:**
+```bash
+export OPENAI_API_KEY="sk-your-api-key-here"
+```
+
+**Windows (PowerShell):**
+```powershell
+$env:OPENAI_API_KEY = "sk-your-api-key-here"
+```
+
+Get your API key from: https://platform.openai.com/api-keys
+
+> **Note**: AI classification is optional. Use `--no-ai` to skip if you don't have an API key.
+
+**Optional OpenAI settings:**
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `OPENAI_API_KEY` | (required) | Your OpenAI API key |
+| `OPENAI_MODEL` | gpt-4o-mini | Model for classification |
+| `OPENAI_TIMEOUT_SECONDS` | 30 | Request timeout |
+| `OPENAI_MAX_BODY_CHARS` | 2500 | Max body chars to send |
+
 ---
 
 ## Usage
@@ -165,26 +193,34 @@ source ~/.zshrc
 ### Basic Usage
 
 ```bash
-python main.py                          # Fetch 25 unread inbox messages (default)
-python main.py --max 50                 # Fetch up to 50 unread inbox messages
-python main.py --unread-only false      # Fetch all messages (read and unread)
-python main.py --folder sentitems       # Fetch from Sent Items folder
-python main.py --out emails.json        # Save output to file
-python main.py --pretty                 # Pretty-print JSON output
-python main.py --no-body                # Exclude body_text (use preview only)
-python main.py --max 100 --folder inbox --unread-only false --out all_inbox.json --pretty
+python main.py                              # Fetch 25 unread inbox messages
+python main.py --max 50 --pretty            # Fetch 50 messages, pretty-print
+python main.py --no-ai --out emails.json    # Fetch without AI classification
+python main.py --out-enriched enriched.json # Fetch with AI, save enriched output
+python main.py --report report.md           # Generate markdown report of flagged emails
 ```
 
 ### Available Options
 
+**Email Fetching:**
 | Option | Default | Description |
 |--------|---------|-------------|
 | `--max` | 25 | Maximum number of messages to fetch |
 | `--folder` | inbox | Mail folder to fetch from |
 | `--unread-only` | true | Only fetch unread messages |
-| `--out` | (none) | Optional file path for JSON output |
+| `--out` | (none) | Output file for normalized JSON |
 | `--pretty` | (flag) | Pretty-print JSON with indentation |
 | `--no-body` | (flag) | Exclude body_text from output |
+
+**AI Classification:**
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--no-ai` | (flag) | Disable AI classification |
+| `--max-ai` | 50 | Max emails to send to AI |
+| `--min-confidence` | 0.75 | Minimum confidence for flagging |
+| `--out-enriched` | (none) | Output file for enriched JSON with AI fields |
+| `--report` | (none) | Generate markdown report |
+| `--apply` | (flag) | Apply flags to mailbox (not yet implemented) |
 
 ### Common Folder Names
 
