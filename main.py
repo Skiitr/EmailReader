@@ -26,6 +26,7 @@ from settings import (
 )
 from graph_client import GraphClient
 from normalize import normalize_messages
+from rules import is_flag_candidate, is_surface_candidate
 
 
 def parse_args() -> argparse.Namespace:
@@ -281,11 +282,109 @@ def main() -> int:
             print(f"Error writing report: {e}", file=sys.stderr)
             return 1
 
-    # Output to stdout (enriched if available, else normalized)
+    # --- Process Candidates (Flag vs Surface) ---
+    
+    # Use enriched messages if AI was enabled, otherwise use normalized
+    final_messages = enriched_messages if enriched_messages else normalized_messages
+    
+    flag_candidates = []
+    surface_candidates = []
+    
+    for msg in final_messages:
+        # Get AI result if available (it's under 'ai' key in enriched output)
+        ai_result = msg.get("ai")
+        
+        # Check Flag Candidate (Strict)
+        if is_flag_candidate(msg, ai_result=ai_result, min_conf=args.min_confidence):
+            # Create a summary entry
+            reason = "AI Decision" if ai_result else "Rule: Action Keyword + Direct To"
+            if ai_result:
+                reason = f"AI: {ai_result.get('classification')} ({ai_result.get('confidence', 0):.0%})"
+                
+            flag_candidates.append({
+                "id": msg["message_id"],
+                "subject": msg["subject"],
+                "from": msg["from"],
+                "reason": reason
+            })
+            
+            # If it's a flag candidate, it's implicitly a surface candidate too, 
+            # but we track surface-specific reasons separately below if not flagged.
+            
+        # Check Surface Candidate (Lenient) - logic handles dedup if needed, 
+        # but here we capture everything that passes surface rules
+        is_surf, surf_reason = is_surface_candidate(msg, ai_result=ai_result)
+        if is_surf:
+            surface_candidates.append({
+                "id": msg["message_id"],
+                "subject": msg["subject"],
+                "from": msg["from"],
+                "reason": surf_reason
+            })
+
+    # Deduplicate: Remove items from surface_candidates that are already in flag_candidates
+    flag_ids = {f["id"] for f in flag_candidates}
+    surface_candidates = [s for s in surface_candidates if s["id"] not in flag_ids]
+
+    # --- Print Summary ---
+    print("\n" + "="*60, file=sys.stderr)
+    print(f"TRIAGE SUMMARY (Processed {len(final_messages)} emails)", file=sys.stderr)
+    print("="*60, file=sys.stderr)
+    
+    print(f"🚩 FLAG CANDIDATES: {len(flag_candidates)} (Action Required)", file=sys.stderr)
+    for i, item in enumerate(flag_candidates[:10]):
+        sender = item['from']['name'] or item['from']['email'] or "Unknown"
+        print(f"  {i+1}. [{item['reason']}] {sender}: {item['subject']}", file=sys.stderr)
+        
+    print(f"\n🔎 SURFACE CANDIDATES: {len(surface_candidates)} (Worth a look)", file=sys.stderr)
+    for i, item in enumerate(surface_candidates[:10]):
+        sender = item['from']['name'] or item['from']['email'] or "Unknown"
+        print(f"  {i+1}. [{item['reason']}] {sender}: {item['subject']}", file=sys.stderr)
+    print("="*60 + "\n", file=sys.stderr)
+
+    # --- Construct Final Output Object ---
+    
+    # Structure: { "emails": [...], "flag_candidates": [...], "surface_candidates": [...] }
+    final_output = {
+        "emails": final_messages,
+        "flag_candidates": flag_candidates,
+        "surface_candidates": surface_candidates
+    }
+
+    # Output to stdout (except if --out/--out-enriched handled it exclusively?)
+    # The requirement says "Output normalized JSON to stdout" usually, but user asked for enriched structure.
+    # We will output the MATCHING structure to stdout if file outputs aren't exclusive or if requested.
+    # Existing behavior: output to stdout if no file args.
+    
     if not args.out and not args.out_enriched:
-        output_data = enriched_messages if enriched_messages else normalized_messages
-        json_output = json.dumps(output_data, indent=indent, ensure_ascii=False)
-        print(json_output)
+        print(json.dumps(final_output, indent=indent, ensure_ascii=False))
+        
+    # Re-write file outputs with new structure if needed?
+    # User request: "Write enriched JSON to file as before, but add a top-level object"
+    
+    if args.out_enriched and enriched_messages:
+        # We need to overwrite the file we just wrote with the new structure
+        # (Optimal way would be to write once, but refactoring main flow is risky. Overwriting is safe.)
+         try:
+            out_path = Path(args.out_enriched)
+            # We already have enriched_messages in final_messages
+            final_output_enriched = {
+                "emails": enriched_messages,
+                "flag_candidates": flag_candidates,
+                "surface_candidates": surface_candidates
+            }
+            json_output = json.dumps(final_output_enriched, indent=indent, ensure_ascii=False)
+            out_path.write_text(json_output, encoding="utf-8")
+            print(f"Updated enriched output with candidates to: {out_path}", file=sys.stderr)
+         except IOError as e:
+            print(f"Error writing enriched file: {e}", file=sys.stderr)
+
+    # Note: --out (normalized only) usually expects just the list of messages. 
+    # The requirement ("Write enriched JSON to file as before, but add a top-level object") likely refers
+    # specifically to the enriched output or the main stdout. 
+    # For backward compatibility with --out (raw data), we might want to keep it as a list, 
+    # OR upgrade it too. "Output structure... for enriched JSON... add a top level object".
+    # I will stick to upgrading enriched output and stdout. raw --out can stay as list for safety.
 
     return 0
 

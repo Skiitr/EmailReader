@@ -131,18 +131,21 @@ Set your Azure App Registration client ID:
 ```bash
 export M365_CLIENT_ID="your-application-client-id-here"
 export M365_TENANT_ID="your-tenant-id-here"  # Optional
+export M365_USER_EMAIL="your.email@domain.com" # Recommended for To vs Cc detection
 ```
 
 **Windows (PowerShell):**
 ```powershell
 $env:M365_CLIENT_ID = "your-application-client-id-here"
 $env:M365_TENANT_ID = "your-tenant-id-here"  # Optional
+$env:M365_USER_EMAIL = "your.email@domain.com" # Recommended for To vs Cc detection
 ```
 
 **Windows (Command Prompt):**
 ```cmd
 set M365_CLIENT_ID=your-application-client-id-here
 set M365_TENANT_ID=your-tenant-id-here
+set M365_USER_EMAIL=your.email@domain.com
 ```
 
 ### Persisting Environment Variables

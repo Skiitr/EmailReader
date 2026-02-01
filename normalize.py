@@ -21,7 +21,7 @@ REPLY_PATTERNS = [
     re.compile(r"^-{3,}\s*Original Message\s*-{3,}", re.MULTILINE | re.IGNORECASE),
     # Classic Outlook reply header block
     re.compile(
-        r"^From:\s*.+\n(?:Sent:\s*.+\n)?(?:To:\s*.+\n)?(?:Cc:\s*.+\n)?(?:Subject:\s*.+)?",
+        r"^From:\s*.+\n(?:Sent:\s*.+\n)?(?:To:\s*.+\n)?(?:Cc:\s*.+\n)?Subject:\s*.+\n",
         re.MULTILINE | re.IGNORECASE,
     ),
     # Gmail-style forwarded message
@@ -37,6 +37,15 @@ SIGNATURE_PATTERNS = [
     # "Get Outlook for iOS/Android"
     re.compile(r"^Get Outlook for \w+", re.MULTILINE | re.IGNORECASE),
 ]
+
+# Patterns for detecting boilerplate/legal text to remove
+BOILERPLATE_PATTERNS = [
+    # LCR-Security Warning banner at top
+    re.compile(r"^LCR-Security Warning:.*?(?:\n\s*\n|$)", re.IGNORECASE | re.DOTALL),
+    # Confidentiality notice blocks at bottom
+    re.compile(r"^CONFIDENTIALITY NOTICE:.*$", re.IGNORECASE | re.DOTALL),
+]
+
 
 
 class HTMLTextExtractor(HTMLParser):
@@ -115,50 +124,111 @@ def strip_html_tags(html_content: str) -> str:
 
 
 def clean_email_body(text: str) -> str:
-    """
-    Clean email body text by removing quoted replies and signatures.
-
-    Applies best-effort heuristics to keep only the newest/primary
-    content from an email, removing:
-    - Quoted reply content (On ... wrote:, etc.)
-    - Forwarded message headers
-    - Signature blocks
-    - Excessive whitespace
-
-    Args:
-        text: Plain text email body.
-
-    Returns:
-        Cleaned text with replies and signatures removed.
-    """
     if not text:
         return ""
+    
+    original_text = text
 
-    # Find the earliest position where a reply/signature marker appears
-    # and truncate everything after it
-    earliest_cut = len(text)
+    # 0) Remove known boilerplate (banners/legal logic) safely
+    # Only remove if it looks like a banner (at start) or footer (at end)
+    for pattern in BOILERPLATE_PATTERNS:
+        match = pattern.search(text)
+        if match:
+            # If it's a security banner (LCR-Security), it usually appears at the very start
+            if "LCR-Security" in match.group() and match.start() < 50:
+                text = text[match.end():].strip()
+                continue
+            
+            # If it's a confidentiality notice, usually at the end
+            if "CONFIDENTIALITY NOTICE:" in match.group().upper():
+                # Only remove if it's long enough to be a real notice
+                if match.end() - match.start() > 100:
+                    text = text[:match.start()].strip()
+                    continue
 
-    # Check for reply markers
+    # 1) Always truncate quoted replies/forwards (high confidence)
+    earliest_reply_cut = len(text)
     for pattern in REPLY_PATTERNS:
         match = pattern.search(text)
-        if match and match.start() < earliest_cut:
-            earliest_cut = match.start()
+        if match and match.start() < earliest_reply_cut:
+            earliest_reply_cut = match.start()
+    text = text[:earliest_reply_cut]
 
-    # Check for signature markers
+    # 2) Only truncate signatures if there's meaningful content before them
+    # Heuristics:
+    # - signature marker must be after MIN_SIG_POS characters
+    # - and content before marker must be "meaningful"
+    MIN_SIG_POS = 200          # don't cut signatures too early
+    MIN_MEANINGFUL_CHARS = 80  # require actual content above signature
+
+    sig_cut = None
     for pattern in SIGNATURE_PATTERNS:
         match = pattern.search(text)
-        if match and match.start() < earliest_cut:
-            earliest_cut = match.start()
+        if match:
+            pos = match.start()
+            before = text[:pos]
+            meaningful_chars = len(re.sub(r"\s+", " ", before).strip())
 
-    # Truncate at the earliest marker found
-    text = text[:earliest_cut]
+            if pos >= MIN_SIG_POS and meaningful_chars >= MIN_MEANINGFUL_CHARS:
+                # choose the earliest valid signature cut
+                if sig_cut is None or pos < sig_cut:
+                    sig_cut = pos
 
-    # Collapse multiple blank lines into at most two
+    if sig_cut is not None:
+        text = text[:sig_cut]
+
+    # 3) Cleanup whitespace
     text = re.sub(r"\n{3,}", "\n\n", text)
-
-    # Remove leading/trailing whitespace from each line and the whole text
     lines = [line.strip() for line in text.split("\n")]
     text = "\n".join(lines).strip()
+
+    # 4) Extra Aggressive Token Saver Cleaning
+    # (Applied after initial cleanup to catch things exposed by previous steps)
+    
+    lines = text.split("\n")
+    cleaned_lines = []
+    
+    # Track content length to safely cut footers only if we have enough content
+    current_length = 0
+    
+    for line in lines:
+        stripped = line.strip()
+        
+        # A) Remove inline image cid references
+        if "cid:image" in line or re.match(r"^\[cid:.*\]$", stripped, re.IGNORECASE):
+            continue
+            
+        # B) Remove common garbage lines
+        # Long separator lines
+        if re.match(r"^[_=-]{5,}$", stripped):
+            continue
+            
+        # Standalone header lines usually left over from reply blocks
+        if re.match(r"^(From|Sent|To|Cc|Subject):.*$", stripped, re.IGNORECASE):
+            continue
+            
+        # C) Remove Confidentiality/Legal Footers (if we already have content)
+        # Check against common footer start patterns
+        if current_length > 120:
+             # Typical legal footer starts
+             if (
+                 re.match(r"^CONFIDENTIALITY NOTICE", stripped, re.IGNORECASE) or 
+                 "sole use of the intended recipient" in line or
+                 "privileged and confidential" in line.lower()
+             ):
+                 # Stop processing lines (remove everything after)
+                 break
+        
+        cleaned_lines.append(line)
+        current_length += len(stripped)
+
+    # Reassemble and collapse blank lines again
+    text = "\n".join(cleaned_lines).strip()
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    
+    # Safety: If aggressive cleaning left almost nothing, fallback to original input
+    if len(re.sub(r"\s+", "", text)) < 20 and len(re.sub(r"\s+", "", original_text)) > 20:
+        return original_text.strip()
 
     return text
 
@@ -218,6 +288,18 @@ def normalize_message(msg: dict[str, Any], include_body: bool = True) -> dict[st
 
             # Clean the body text
             body_text = clean_email_body(body_text)
+
+            # Fallback to body_preview if body_text is effectively empty or too short
+            # (e.g., approval emails often have minimal reply text, mostly boilerplate)
+            if not body_text or len(re.sub(r"\s+", "", body_text)) < 80:
+                body_preview = msg.get("bodyPreview") or ""
+                if body_preview:
+                    # Apply same cleaning logic to preview
+                    cleaned_preview = clean_email_body(body_preview)
+                    if cleaned_preview:
+                        # Only use preview if it actually adds content or is longer
+                        if not body_text or len(cleaned_preview) > len(body_text):
+                            body_text = cleaned_preview
 
             # Truncate if too long
             if body_text and len(body_text) > MAX_BODY_LENGTH:
