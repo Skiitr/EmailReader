@@ -105,10 +105,10 @@ def get_response_format() -> dict[str, Any]:
         Dict with type and json_schema configuration for the API call.
     """
     return {
-        "type": "json_schema",
-        "json_schema": {
+        "format": {
+            "type": "json_schema",
             "name": "email_classification",
             "strict": True,
             "schema": EMAIL_CLASSIFICATION_SCHEMA,
-        },
+        }
     }

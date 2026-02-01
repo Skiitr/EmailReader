@@ -70,10 +70,10 @@ class AIClient:
                 response = self.client.responses.create(
                     model=self.model,
                     input=[
-                        {"role": "system", "content": [{"type": "text", "text": system_prompt}]},
-                        {"role": "user", "content": [{"type": "text", "text": user_prompt}]},
+                        {"role": "system", "content": [{"type": "input_text", "text": system_prompt}]},
+                        {"role": "user", "content": [{"type": "input_text", "text": user_prompt}]},
                     ],
-                    text={"format": get_response_format()},
+                    text=get_response_format(),
                     temperature=0,
                     max_output_tokens=MAX_OUTPUT_TOKENS,
                     store=OPENAI_STORE,
@@ -145,3 +145,19 @@ def get_ai_client() -> AIClient:
     if _client is None:
         _client = AIClient()
     return _client
+
+
+if __name__ == "__main__":
+    # Tiny self-test to verify schema compliance and API connectivity
+    print("Running AI Client self-test...")
+    try:
+        client = get_ai_client()
+        result = client.classify_email(
+            system_prompt="You are an email classifier.",
+            user_prompt="Subject: Test\n\nThis is a test email.",
+        )
+        print("Self-test SUCCESS!")
+        print(json.dumps(result, indent=2))
+    except Exception as e:
+        print(f"Self-test FAILED: {e}")
+        sys.exit(1)
