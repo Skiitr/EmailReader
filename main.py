@@ -325,6 +325,10 @@ def main() -> int:
     sender_profiles = update_sender_profiles(sender_profiles, final_messages)
     save_sender_profiles(sender_profiles)
 
+    # Ensure top-N output always bubbles highest-priority emails first.
+    flag_candidates.sort(key=lambda item: item["score"], reverse=True)
+    surface_candidates.sort(key=lambda item: item["score"], reverse=True)
+
     # --- Print Summary ---
     print("\n" + "="*60, file=sys.stderr)
     print(f"TRIAGE SUMMARY (Processed {len(final_messages)} emails)", file=sys.stderr)
