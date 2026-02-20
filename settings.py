@@ -91,3 +91,58 @@ def validate_openai_settings() -> None:
             "Get your API key from https://platform.openai.com/api-keys"
         )
 
+
+# =============================================================================
+# Heuristic Scoring Configuration (no-AI mode and fallback)
+# =============================================================================
+
+M365_USER_EMAIL = os.environ.get("M365_USER_EMAIL", "").strip().lower()
+M365_VIP_SENDERS = {
+    s.strip().lower()
+    for s in os.environ.get("M365_VIP_SENDERS", "").split(",")
+    if s.strip()
+}
+
+# Local memory file for sender scoring priors
+HEURISTIC_PROFILE_PATH = Path(
+    os.environ.get("HEURISTIC_PROFILE_PATH", "./sender_profiles.json")
+)
+
+# Decision thresholds
+HEURISTIC_FLAG_THRESHOLD = int(os.environ.get("HEURISTIC_FLAG_THRESHOLD", "70"))
+HEURISTIC_SURFACE_THRESHOLD = int(os.environ.get("HEURISTIC_SURFACE_THRESHOLD", "40"))
+
+# Weight policy (kept separate from extraction logic for easy tuning)
+HEURISTIC_WEIGHTS = {
+    "to_me": 24,
+    "cc_me": 6,
+    "unknown_recipient_role": 0,
+    "unread": 8,
+    "importance_high": 14,
+    "has_attachments": 5,
+    "external_sender": 2,
+    "internal_sender": 7,
+    "vip_sender": 15,
+    "noreply_sender": -30,
+    "automation_pattern": -20,
+    "action_phrase_strong": 20,
+    "action_phrase_weak": 8,
+    "direct_salutation": 14,
+    "direct_salutation_to_me": 10,
+    "small_group_question": 8,
+    "thread_addition": 24,
+    "thread_addition_cc_me": 16,
+    "multi_to_no_salutation": -18,
+    "last_request_phrase": 12,
+    "question_present": 8,
+    "imperative_present": 10,
+    "deadline_present": 18,
+    "urgency_present": 12,
+    "approval_workflow": 16,
+    "contract_finance_signal": 14,
+    "fyi_phrase": -14,
+    "newsletter_phrase": -22,
+    "no_action_phrase": -24,
+    "sender_history_max_boost": 6,
+    "sender_history_max_penalty": -8,
+}

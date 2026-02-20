@@ -5,9 +5,8 @@ Transforms normalized emails into classification requests and
 processes AI responses to determine flagging decisions.
 """
 import re
-from typing import Any
+from typing import Any, Optional
 
-from ai_client import get_ai_client
 from settings import OPENAI_MAX_BODY_CHARS
 
 
@@ -37,7 +36,7 @@ NOISE_PATTERNS = [
 ]
 
 
-def should_skip_email(msg: dict[str, Any], user_email: str | None = None) -> tuple[bool, str]:
+def should_skip_email(msg: dict[str, Any], user_email: Optional[str] = None) -> tuple[bool, str]:
     """
     Determine if an email should skip AI classification.
 
@@ -69,7 +68,7 @@ def should_skip_email(msg: dict[str, Any], user_email: str | None = None) -> tup
     return False, ""
 
 
-def truncate_body(body_text: str | None, max_chars: int = OPENAI_MAX_BODY_CHARS) -> str:
+def truncate_body(body_text: Optional[str], max_chars: int = OPENAI_MAX_BODY_CHARS) -> str:
     """
     Truncate body text to max characters.
 
@@ -163,7 +162,7 @@ def compute_final_flag(
 def classify_email(
     msg: dict[str, Any],
     min_confidence: float = 0.75,
-    user_email: str | None = None,
+    user_email: Optional[str] = None,
 ) -> dict[str, Any]:
     """
     Classify a normalized email using AI.
@@ -202,6 +201,8 @@ def classify_email(
 
     # Build prompt and call AI
     user_prompt = build_user_prompt(msg)
+    from ai_client import get_ai_client
+
     client = get_ai_client()
 
     try:
@@ -241,7 +242,7 @@ def classify_emails(
     messages: list[dict[str, Any]],
     max_ai: int = 50,
     min_confidence: float = 0.75,
-    user_email: str | None = None,
+    user_email: Optional[str] = None,
 ) -> list[dict[str, Any]]:
     """
     Classify a list of normalized emails.

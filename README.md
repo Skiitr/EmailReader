@@ -8,6 +8,8 @@ A Python CLI tool that fetches emails from Microsoft 365 Outlook using the Micro
 - 💾 **Token caching** - login once, reuse tokens for subsequent runs
 - 📧 **Flexible email fetching** - filter by folder, read status, and count
 - 🤖 **AI classification** - identify action requests, questions, and meetings (optional)
+- 🎯 **Deterministic heuristic scoring** - weighted no-AI triage with explainable score breakdown
+- 🧠 **Sender memory** - local sender priors to improve no-AI ranking over time
 - 📄 **JSON output** - structured output to stdout and optional file
 - 🖥️ **Cross-platform** - works on macOS (Apple Silicon) and Windows
 
@@ -189,6 +191,15 @@ Get your API key from: https://platform.openai.com/api-keys
 | `OPENAI_TIMEOUT_SECONDS` | 30 | Request timeout |
 | `OPENAI_MAX_BODY_CHARS` | 2500 | Max body chars to send |
 
+**Optional Heuristic settings (for `--no-ai` and fallback):**
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `M365_USER_EMAIL` | (empty) | Your mailbox address for To vs Cc scoring |
+| `M365_VIP_SENDERS` | (empty) | Comma-separated sender emails to prioritize |
+| `HEURISTIC_FLAG_THRESHOLD` | 70 | Score threshold for flag candidates |
+| `HEURISTIC_SURFACE_THRESHOLD` | 40 | Score threshold for surface candidates |
+| `HEURISTIC_PROFILE_PATH` | `./sender_profiles.json` | Local sender-memory JSON path |
+
 ---
 
 ## Usage
@@ -251,52 +262,58 @@ After successful authentication, tokens are cached in `token_cache.json` and sub
 
 ## Example Output
 
-Output is a JSON array of normalized message objects:
+Output is a top-level JSON object containing emails plus triage candidate lists:
 
 ```json
-[
-  {
-    "message_id": "AAMkAGI2...",
-    "conversation_id": "AAQkAGI2...",
-    "internet_message_id": "<abc123@mail.example.com>",
-    "subject": "Weekly Team Update",
-    "from": {
-      "name": "John Doe",
-      "email": "john.doe@company.com"
-    },
-    "to": ["jane.smith@company.com"],
-    "cc": [],
-    "received_at": "2026-01-24T14:30:00Z",
-    "sent_at": "2026-01-24T14:29:55Z",
-    "is_read": false,
-    "web_link": "https://outlook.office365.com/owa/?ItemID=...",
-    "has_attachments": false,
-    "importance": "normal",
-    "body_preview": "Hi team, Here's our weekly update...",
-    "body_text": "Hi team,\n\nHere's our weekly update..."
-  }
-]
+{
+  "emails": [
+    {
+      "message_id": "AAMkAGI2...",
+      "subject": "Weekly Team Update",
+      "from": { "name": "John Doe", "email": "john.doe@company.com" },
+      "to": ["jane.smith@company.com"],
+      "cc": [],
+      "received_at": "2026-01-24T14:30:00Z",
+      "is_read": false,
+      "body_text": "Hi team...",
+      "triage": {
+        "decision": "surface",
+        "priority_score": 54,
+        "reason": "to_me (+24), action_phrase_weak (+8), unread (+8)",
+        "score_breakdown": [{"signal": "to_me", "points": 24}]
+      }
+    }
+  ],
+  "flag_candidates": [],
+  "surface_candidates": []
+}
 ```
 
 ### Output Schema
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `message_id` | string | Graph message ID |
-| `conversation_id` | string\|null | Thread/conversation ID |
-| `internet_message_id` | string\|null | RFC 2822 Message-ID |
-| `subject` | string\|null | Email subject |
-| `from` | object | Sender with `name` and `email` |
-| `to` | array | List of recipient email addresses |
-| `cc` | array | List of CC email addresses |
-| `received_at` | string\|null | ISO 8601 received timestamp |
-| `sent_at` | string\|null | ISO 8601 sent timestamp |
-| `is_read` | boolean | Read status |
-| `web_link` | string\|null | Outlook Web App link |
-| `has_attachments` | boolean | Has attachments |
-| `importance` | string\|null | low/normal/high |
-| `body_preview` | string\|null | Short preview text |
-| `body_text` | string\|null | Cleaned plain text body (max 4000 chars) |
+| `emails` | array | Normalized emails (includes `ai` and/or `triage` fields) |
+| `flag_candidates` | array | Strict action-required candidates |
+| `surface_candidates` | array | Worth-a-look candidates |
+
+Each `emails[]` item includes the normalized schema and:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `triage.decision` | string | `flag`, `surface`, or `ignore` |
+| `triage.priority_score` | integer | Heuristic priority score (0-100) |
+| `triage.reason` | string | Human-readable top contributing signals |
+| `triage.score_breakdown` | array | Per-signal contribution list |
+
+### Heuristic Calibration
+
+Evaluate and tune heuristic mode against labeled data:
+
+```bash
+python heuristic_eval.py --dataset calibration_dataset.jsonl
+python smoke_test_heuristics.py
+```
 
 ---
 
@@ -381,8 +398,13 @@ python main.py  # Re-authenticate
 | `main.py` | CLI entry point with argument parsing |
 | `graph_client.py` | MSAL auth + Graph API client |
 | `normalize.py` | Email body cleaning and canonical schema normalization |
+| `rules.py` | Triage policy wrappers (AI + heuristic) |
+| `heuristics.py` | Feature extraction, weighted scoring, sender-memory logic |
 | `settings.py` | Configuration and environment variables |
 | `smoke_test_normalize.py` | Smoke tests for normalization module |
+| `smoke_test_heuristics.py` | Smoke tests for heuristic scoring |
+| `heuristic_eval.py` | Offline evaluation against labeled calibration data |
+| `calibration_dataset.jsonl` | Starter labeled dataset for tuning |
 | `requirements.txt` | Python dependencies |
 | `token_cache.json` | Token cache (created after first login) |
 

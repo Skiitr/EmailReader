@@ -21,12 +21,19 @@ from settings import (
     DEFAULT_UNREAD_ONLY,
     DEFAULT_MAX_AI,
     DEFAULT_MIN_CONFIDENCE,
+    M365_USER_EMAIL,
     validate_settings,
     validate_openai_settings,
 )
 from graph_client import GraphClient
+from heuristics import (
+    infer_user_email,
+    load_sender_profiles,
+    save_sender_profiles,
+    update_sender_profiles,
+)
 from normalize import normalize_messages
-from rules import is_flag_candidate, is_surface_candidate
+from rules import triage_email
 
 
 def parse_args() -> argparse.Namespace:
@@ -212,6 +219,9 @@ def main() -> int:
 
     # AI Classification
     enriched_messages = None
+    inferred_user_email = M365_USER_EMAIL or infer_user_email(normalized_messages) or None
+    if inferred_user_email and not M365_USER_EMAIL:
+        print(f"Heuristic: inferred user email as {inferred_user_email}", file=sys.stderr)
     if args.ai_enabled and normalized_messages:
         print(f"Classifying emails with AI (max {args.max_ai})...", file=sys.stderr)
 
@@ -222,6 +232,7 @@ def main() -> int:
                 normalized_messages,
                 max_ai=args.max_ai,
                 min_confidence=args.min_confidence,
+                user_email=inferred_user_email,
             )
 
             # Print summary
@@ -258,17 +269,6 @@ def main() -> int:
             print(f"Error writing to file: {e}", file=sys.stderr)
             return 1
 
-    # Output enriched JSON (with AI)
-    if args.out_enriched and enriched_messages:
-        json_output = json.dumps(enriched_messages, indent=indent, ensure_ascii=False)
-        try:
-            out_path = Path(args.out_enriched)
-            out_path.write_text(json_output, encoding="utf-8")
-            print(f"Enriched output written to: {out_path}", file=sys.stderr)
-        except IOError as e:
-            print(f"Error writing enriched file: {e}", file=sys.stderr)
-            return 1
-
     # Generate markdown report
     if args.report and enriched_messages:
         try:
@@ -283,48 +283,47 @@ def main() -> int:
             return 1
 
     # --- Process Candidates (Flag vs Surface) ---
-    
     # Use enriched messages if AI was enabled, otherwise use normalized
     final_messages = enriched_messages if enriched_messages else normalized_messages
-    
+    sender_profiles = load_sender_profiles()
+
     flag_candidates = []
     surface_candidates = []
-    
-    for msg in final_messages:
-        # Get AI result if available (it's under 'ai' key in enriched output)
-        ai_result = msg.get("ai")
-        
-        # Check Flag Candidate (Strict)
-        if is_flag_candidate(msg, ai_result=ai_result, min_conf=args.min_confidence):
-            # Create a summary entry
-            reason = "AI Decision" if ai_result else "Rule: Action Keyword + Direct To"
-            if ai_result:
-                reason = f"AI: {ai_result.get('classification')} ({ai_result.get('confidence', 0):.0%})"
-                
-            flag_candidates.append({
-                "id": msg["message_id"],
-                "subject": msg["subject"],
-                "from": msg["from"],
-                "reason": reason
-            })
-            
-            # If it's a flag candidate, it's implicitly a surface candidate too, 
-            # but we track surface-specific reasons separately below if not flagged.
-            
-        # Check Surface Candidate (Lenient) - logic handles dedup if needed, 
-        # but here we capture everything that passes surface rules
-        is_surf, surf_reason = is_surface_candidate(msg, ai_result=ai_result)
-        if is_surf:
-            surface_candidates.append({
-                "id": msg["message_id"],
-                "subject": msg["subject"],
-                "from": msg["from"],
-                "reason": surf_reason
-            })
 
-    # Deduplicate: Remove items from surface_candidates that are already in flag_candidates
-    flag_ids = {f["id"] for f in flag_candidates}
-    surface_candidates = [s for s in surface_candidates if s["id"] not in flag_ids]
+    for msg in final_messages:
+        ai_result = msg.get("ai")
+        triage = triage_email(
+            msg,
+            ai_result=ai_result,
+            min_conf=args.min_confidence,
+            sender_profiles=sender_profiles,
+            user_email=inferred_user_email,
+        )
+        msg["triage"] = triage
+
+        if triage["decision"] == "flag":
+            flag_candidates.append(
+                {
+                "id": msg["message_id"],
+                "subject": msg["subject"],
+                "from": msg["from"],
+                "score": triage["priority_score"],
+                "reason": triage["reason"],
+                }
+            )
+        elif triage["decision"] == "surface":
+            surface_candidates.append(
+                {
+                "id": msg["message_id"],
+                "subject": msg["subject"],
+                "from": msg["from"],
+                "score": triage["priority_score"],
+                "reason": triage["reason"],
+                }
+            )
+
+    sender_profiles = update_sender_profiles(sender_profiles, final_messages)
+    save_sender_profiles(sender_profiles)
 
     # --- Print Summary ---
     print("\n" + "="*60, file=sys.stderr)
@@ -333,13 +332,19 @@ def main() -> int:
     
     print(f"🚩 FLAG CANDIDATES: {len(flag_candidates)} (Action Required)", file=sys.stderr)
     for i, item in enumerate(flag_candidates[:10]):
-        sender = item['from']['name'] or item['from']['email'] or "Unknown"
-        print(f"  {i+1}. [{item['reason']}] {sender}: {item['subject']}", file=sys.stderr)
+        sender = item["from"]["name"] or item["from"]["email"] or "Unknown"
+        print(
+            f"  {i+1}. [score={item['score']}] [{item['reason']}] {sender}: {item['subject']}",
+            file=sys.stderr,
+        )
         
     print(f"\n🔎 SURFACE CANDIDATES: {len(surface_candidates)} (Worth a look)", file=sys.stderr)
     for i, item in enumerate(surface_candidates[:10]):
-        sender = item['from']['name'] or item['from']['email'] or "Unknown"
-        print(f"  {i+1}. [{item['reason']}] {sender}: {item['subject']}", file=sys.stderr)
+        sender = item["from"]["name"] or item["from"]["email"] or "Unknown"
+        print(
+            f"  {i+1}. [score={item['score']}] [{item['reason']}] {sender}: {item['subject']}",
+            file=sys.stderr,
+        )
     print("="*60 + "\n", file=sys.stderr)
 
     # --- Construct Final Output Object ---
@@ -359,25 +364,15 @@ def main() -> int:
     if not args.out and not args.out_enriched:
         print(json.dumps(final_output, indent=indent, ensure_ascii=False))
         
-    # Re-write file outputs with new structure if needed?
-    # User request: "Write enriched JSON to file as before, but add a top-level object"
-    
-    if args.out_enriched and enriched_messages:
-        # We need to overwrite the file we just wrote with the new structure
-        # (Optimal way would be to write once, but refactoring main flow is risky. Overwriting is safe.)
-         try:
+    if args.out_enriched:
+        try:
             out_path = Path(args.out_enriched)
-            # We already have enriched_messages in final_messages
-            final_output_enriched = {
-                "emails": enriched_messages,
-                "flag_candidates": flag_candidates,
-                "surface_candidates": surface_candidates
-            }
-            json_output = json.dumps(final_output_enriched, indent=indent, ensure_ascii=False)
+            json_output = json.dumps(final_output, indent=indent, ensure_ascii=False)
             out_path.write_text(json_output, encoding="utf-8")
-            print(f"Updated enriched output with candidates to: {out_path}", file=sys.stderr)
-         except IOError as e:
+            print(f"Enriched output written to: {out_path}", file=sys.stderr)
+        except IOError as e:
             print(f"Error writing enriched file: {e}", file=sys.stderr)
+            return 1
 
     # Note: --out (normalized only) usually expects just the list of messages. 
     # The requirement ("Write enriched JSON to file as before, but add a top-level object") likely refers
